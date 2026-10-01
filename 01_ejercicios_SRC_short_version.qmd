@@ -1,0 +1,689 @@
+---
+title: "Importancia de los sistemas de referencia de coordenadas en ecología"
+subtitle: "Ejemplo con localizaciones de muestreo simuladas"
+lang: es
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    code-fold: false
+    code-tools: true
+    theme: cosmo
+    css: styles.css
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+# Objetivos
+
+Este ejemplo introduce cuatro recomendaciones para trabajar con datos espaciales en ecología:
+
+Cuatro recomendaciones:
+
+1.  Elegir un sistema de referencia de coordenadas (SRC) adecuado para la zona de estudio y los análisis que se van a realizar.
+2.  Documentar siempre el SRC empleado, preferiblemente indicando su código EPSG para garantizar la reproducibilidad del trabajo.
+3.  Evaluar las consecuencias de las transformaciones entre SRC, ya que pueden introducir distorsiones o afectar a la precisión de los resultados.
+4.  Tener en cuenta el efecto de la resolución espacial de los datos en función de la escala y objetivos del estudio, especialmente al integrar información procedente de distintas fuentes o escalas.
+
+# Carga de paquetes y simulación y representación de los datos
+
+El siguiente bloque carga los paquetes y configura el mapa base de las visualizaciones interactivas.
+
+```{r}
+#| label: Carga de paquetes
+# Ejecutar una vez si pacman no está instalado
+if(!("pacman" %in% installed.packages())) install.packages("pacman")
+
+pacman::p_load( sf, 
+                # Representar, manipular, analizar y visualizar datos vectoriales espaciales
+                # (puntos, líneas y polígonos)
+                terra, 
+                # Herramientas para trabajar con datos espaciales (raster y vectoriales): 
+                # lectura, procesamiento, análisis, visualización...
+                tidyterra, 
+                # objetos de terra con la filosofía del tidyverse
+                maptiles, 
+                # descargar y utilizar mapas base (basemaps) de distintos 
+                # proveedores cartográficos
+                tidyverse, 
+                # Conjunto de paquetes para la importación, transformación,
+                # análisis y visualización
+                mapview,
+                # Visualizar de forma rápida e interactiva datos espaciales 
+                # (vectores y rásteres) en mapas explorables dentro de R
+                viridis,
+                # Paletas de colores
+                patchwork
+                # Combinar y organizar múltiples gráficos de ggplot2 en una única figura
+)
+
+# Configurar mapa base
+mapview::mapviewOptions(basemaps = "OpenStreetMap.DE")
+
+```
+
+## Localizaciones de muestreo
+
+Vamos a crear una base de datos (totalmente inventados) de riqueza de especies en ocho parcelas en Sevilla.
+
+```{r}
+#| label: Simular datos
+# Crear datos simulados
+muestreos <- data.frame(
+  parcela = paste0("P", 1:8),
+  longitud = c(-5.984, -5.932, -5.894, -5.847,
+               -5.795, -5.755, -5.710, -5.670),
+  latitud = c(37.389, 37.425, 37.365, 37.455,
+              37.395, 37.495, 37.430, 37.470),
+  riqueza = c(12, 18, 9, 21, 15, 25, 17, 13))
+
+
+# Revisar datos
+print(muestreos, digits = 4, row.names = FALSE)
+```
+
+## Crear un objeto espacial
+
+Convertimos la tabla en un objeto geográfico (`sf`). El código EPSG:4326 identifica WGS84 con coordenadas geográficas.
+
+```{r Crear objeto espacial}
+# Convertir la tabla en un objeto espacial
+muestreos_wgs84 <- muestreos |>
+  st_as_sf(
+    coords = c("longitud", "latitud"),
+    crs = 4326)
+
+print(muestreos_wgs84)
+```
+
+Distinguimos que es un objeto espacial porque ahora tiene una geometría asociada (en este caso de tipo punto) y un Sistema de Referencia de Coordenadas (SRC). Para estar seguros que el SRC está bien asignado y que los puntos representan nuestra zona de estudio siemre es conveniente representarlo. Para ello es una buena alternativa usar QGIS, que está preparado para la visualización, pero también lo podemos hacer en R.
+
+```{r}
+#| label: Representación de los puntos
+# Mapa base
+
+osm <- get_tiles(muestreos_wgs84, provider = "OpenStreetMap", crop = TRUE)
+
+location_map <- ggplot() +
+  
+  geom_spatraster_rgb(data = osm) +
+  
+  geom_sf(data = muestreos_wgs84,
+          colour = "red",
+          size = 3)
+
+plot(location_map)
+
+```
+
+# Recomendación (1): Elegir un sistema de referencia de coordenadas (SRC) adecuado para la zona de estudio y los análisis que se van a realizar
+
+Una de los aspectos más importantes cuando trabajamos con datos geográficos y, por tanto, con Sistmas de Referencia de Coordenadas (SRC) es elegir un SRC adecuado según la localización y extensión de nuestra área de estudio. Algunas recomendaciones, se pueden encontrar en: https://datos.gob.es/sites/default/files/doc/file/guia_publicacion_datos_espaciales_1.pdf.
+
+![Resumen recomendaciones SRC](images/Recomendaciones_SRC.png).
+
+## ¿Como puede afectar el SRC al cálculo de distancias?
+
+Para ver como puede afectar la elección del SRC en el cálculo de distancias, vamos a comprar las distanacias entre parcelas con los datos en diferentes SRC:
+
+- EPSG:4326 SRC geográfico global. Sus coordenadas se expresan en grados. Es el sistema nativo del GPS y el estándar por defecto en algunos formatos web.
+
+- EPSG:25830 ETRS89 / UTM zona 30N (SRC proyectado). Es el sistema oficial de cartografía y geolocalización en España para la producción de mapas topográficos y datos geográficos estándar de la zona centro Peninsular.
+
+- EPSG:3857 WGS 84 / Pseudo-Mercator. Se utiliza habitualmente para visualización web (Open Street Maps, Google Maps etc), pero no es recomendable para mediciones precisas de superficies o distancias.
+
+```{r}
+#| label: Calculo de distancias en diferentes SRC
+
+# Coordenadas de P1 y P8
+p1 <- st_coordinates(muestreos_wgs84[muestreos_wgs84$parcela == "P1", ])
+p8 <- st_coordinates(muestreos_wgs84[muestreos_wgs84$parcela == "P8", ])
+
+location_map_dist <- ggplot() +
+  
+  geom_spatraster_rgb(data = osm) +
+  
+  geom_sf(
+    data = muestreos_wgs84,
+    colour = "red",
+    size = 3
+  )+
+  
+  geom_segment(
+    aes(
+      x    = p1[1],
+      y    = p1[2],
+      xend = p8[1],
+      yend = p8[2]
+    ),
+    colour = "blue",
+    linewidth = 1,
+    arrow = arrow(length = unit(0.2, "cm"))
+  ) +
+  labs(x="longitud", y="latitud")
+
+location_map_dist
+
+# Transformamos los datos a diferentes a EPSG:25830 (UTM zona 30N) y a EPSG:3857 (pseudomercator)
+
+muestreos_utm <- st_transform(muestreos_wgs84, 25830)
+muestreos_mercator <- st_transform(muestreos_wgs84, 3857)
+
+# Distancia entre la primera y la última parcela en coordenadas geográficas (WGS84)
+
+distancia_geodesica <- st_distance(
+  muestreos_wgs84[1, ],
+  muestreos_wgs84[8, ]
+)
+
+# Distancia plana en un SRC local adecuado (ETRS89 proyectadas UTM zona 30Norte)
+
+distancia_utm <- st_distance(
+  muestreos_utm[1, ],
+  muestreos_utm[8, ]
+)
+
+# Distancia plana calculada en Pseudo-Mercator.
+
+distancia_mercator <- st_distance(
+  muestreos_mercator[1, ],
+  muestreos_mercator[8, ]
+)
+
+comparacion_distancias <- data.frame(
+  metodo = c(
+    "Geodésica en WGS 84",
+    "Plana en ETRS89 / UTM 30N",
+    "Plana en Web Mercator"
+  ),
+  distancia_km = c(
+    as.numeric(distancia_geodesica),
+    as.numeric(distancia_utm),
+    as.numeric(distancia_mercator)
+  ) / 1000
+)
+
+knitr::kable(
+  comparacion_distancias,
+  caption = "Comparación de distancias entre P1 y P8 según el sistema de referencia utilizados"
+)
+
+ggplot(
+  comparacion_distancias,
+  aes(x = metodo, y = distancia_km, fill = metodo)
+) +
+  geom_col(width = 0.65, show.legend = FALSE) +
+  geom_text(
+    aes(label = sprintf("%.2f km", distancia_km)),
+    vjust = -0.4
+  ) +
+  labs(
+    title = "La distancia depende del SRC y del método de cálculo",
+    subtitle = "Distancia entre las parcelas P1 y P8",
+    x = NULL,
+    y = "Distancia estimada (km)"
+  ) +
+  coord_cartesian(
+    ylim = c(0, max(comparacion_distancias$distancia_km) * 1.15)
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  )
+```
+
+## ¿Como puede afectar el SRC al cálculo de superficies?
+
+Al igual que el SRC influye en el cálculo de distancias, también influye en el cálculo de superficies
+
+```{r}
+
+#Crear un área de influencia de 1 km alrededor de cada parcela.
+# Para hacer un buffer de una distancia conocida se utiliza el
+# SRC proyectado local EPSG:25830, cuyas unidades son metros.
+
+buffers_utm <- st_buffer(muestreos_utm, dist = 1000)
+
+# Superficie de los buffers.
+
+buffers_utm$area_ha <- as.numeric(st_area(buffers_utm)) / 10000
+
+# Crear los mismos buffers directamente en Web Mercator.
+
+buffers_mercator <- st_buffer(muestreos_mercator, dist = 1000)
+
+# Transformarlos a UTM para comparar su superficie en un mismo SRC.
+
+buffers_mercator_utm <- st_transform(buffers_mercator, 25830)
+
+buffers_mercator_utm$area_ha <- (
+  as.numeric(st_area(buffers_mercator_utm)) / 10000
+)
+
+comparacion_areas <- data.frame(
+  parcela = buffers_utm$parcela,
+  area_real_ha = (pi*1000^2)/10000,
+  area_utm_ha = buffers_utm$area_ha,
+  
+  area_mercator_ha = buffers_mercator_utm$area_ha
+) |>
+  mutate(
+    area_utm_ha_error = abs((area_real_ha-area_utm_ha)/area_real_ha)*100,
+    area_mercator_ha_error = abs((area_real_ha-area_mercator_ha)/area_real_ha)*100)
+
+knitr::kable(
+  comparacion_areas,
+  caption = "Comparación de áreas según el sistema de referencia utilizado"
+)
+
+
+ggplot(
+  comparacion_areas,
+  aes(x = parcela)
+) +
+  geom_point(
+    aes(y = area_utm_ha, colour = "ETRS89 / UTM 30N"),
+    size = 3
+  ) +
+  geom_point(
+    aes(y = area_mercator_ha, colour = "Web Mercator"),
+    size = 3
+  ) +
+  labs(
+    title = "El SRC afecta al cálculo de superficies",
+    subtitle = "Buffers definidos como círculos de 1.000 m",
+    x = "Parcela",
+    y = "Superficie después de transformarla a UTM (ha)",
+    colour = "SRC utilizado\npara crear el buffer"
+  ) +
+  theme_minimal()
+
+```
+
+# Recomendación (2): Documentar siempre el SRC empleado, preferiblemente indicando su código EPSG para garantizar la reproducibilidad del trabajo.
+
+EL código EPSG es un identificador numérico único que define un Sistema de Referencia de Coordendas (SRC). Es un código abreviado que agrupa elipsoide, datum y proyección cartográfica.
+
+## ¿Cómo lo reportamos?
+
+```{r}
+
+# Información resumida.
+
+st_crs(muestreos_wgs84)
+st_crs(muestreos_utm)
+st_crs(muestreos_mercator)
+
+# Obtener explícitamente códigos EPSG y nombres.
+
+informacion_src <- data.frame(
+  objeto = c(
+    "Datos originales",
+    "Datos para análisis local",
+    "Datos en Web Mercator"
+  ),
+  nombre_src = c(
+    st_crs(muestreos_wgs84)$Name,
+    st_crs(muestreos_utm)$Name,
+    st_crs(muestreos_mercator)$Name
+  ),
+  epsg = c(
+    st_crs(muestreos_wgs84)$epsg,
+    st_crs(muestreos_utm)$epsg,
+    st_crs(muestreos_mercator)$epsg
+  )
+)
+
+knitr::kable(informacion_src,
+             caption = "Resumen nombre SRC y EPSG")
+```
+
+## ¿Y que pasa si no lo reportamos correctamente?
+
+Ejemplo, se reporta que es ETRS89/UTM pero no la zona
+
+```{r}
+
+# Como no la sabemos asignamos una zona UTM incorrecta
+
+#Generamos datos
+muestreos_utm_zona_mal <- muestreos_utm
+st_crs(muestreos_utm_zona_mal)<- NA #Datos de partida
+
+# Mostramos datos (sin SRC)
+muestreos_utm_zona_mal
+
+#Como no sabemos la zona asignamos una de manera incorrecta
+st_crs(muestreos_utm_zona_mal) <- 25831
+
+bb <- st_bbox(c(
+  xmin = -7,
+  xmax = 7,
+  ymin = 37,
+  ymax = 41
+), crs = st_crs(4326))
+
+bb_sf <- st_as_sfc(bb)
+
+osm <- get_tiles(bb_sf, provider = "OpenStreetMap")
+
+osm<-get_tiles(bb, provider = "OpenStreetMap")
+
+ggplot() +
+  
+  geom_spatraster_rgb(data = osm) +
+  
+  geom_sf(data = muestreos_utm, colour = "red", size = 3) + 
+  geom_sf(data = muestreos_utm_zona_mal, colour = "blue", size = 3) +
+  coord_sf(
+    xlim = c(-7, 7),
+    ylim = c(37, 41))
+```
+
+# Recomendacion (3): Conocer las implicaciones de las transformaciones del SRC: las reproyecciones
+
+En R podemos reproyectar con st_transform(), del paquete sf, y con project(), del paquete terra:
+```{r}
+# Transformar las coordenadas al SRC de destino
+muestreos_reproyectado <- muestreos_wgs84 |>
+  st_transform(25830)
+# Con el paquete terra sería: 
+terra::project(vect(muestreos_wgs84), "EPSG:25830" )
+```
+
+```{r}
+mapview(muestreos_reproyectado)
+```
+
+```{r}
+# Comparar coordenadas de la primera parcela
+comparacion_coordenadas <-
+  data.frame(
+    caso = c("SRC original",
+             "SRC reproyectado"),
+    x = c(st_coordinates(muestreos_wgs84)[1, "X"],
+          st_coordinates(muestreos_reproyectado)[1, "X"]),
+    y = c(st_coordinates(muestreos_wgs84)[1, "Y"],
+          st_coordinates(muestreos_reproyectado)[1, "Y"])
+  )
+
+print(comparacion_coordenadas)
+
+```
+
+## Precisión de las coordenadas
+
+Hay que distinguir entre el error de posicionamiento del GPS (precisión o incertidumbre) y el número de decimales con el que se almacenan o reportan las coordenadas (resolución).
+
+Un receptor GPS puede mostrar 5, 6 o incluso más decimales en coordenadas geográficas, lo que podría sugerir una precisión submétrica o centimétrica. Sin embargo, la precisión real de la observación depende del dispositivo y de las condiciones de recepción. Por ejemplo, un GPS de mano o un teléfono móvil suele presentar errores del orden de 3-5 m en buenas condiciones y superiores a 10 m bajo cobertura densa o en entornos complejos.
+
+Además, durante operaciones de transformación de coordenadas, como `st_transform()`, es habitual que aparezcan más cifras decimales. Estos decimales adicionales son simplemente el resultado de los cálculos matemáticos empleados en la transformación y no implican un aumento de la precisión de la observación original.
+
+```{r}
+# Tenemos unos puntos tomados en campo en la capa muestreos_wgs84
+muestreos_wgs84
+# Con una precisión de 4 decimales
+print(st_coordinates(muestreos_wgs84))
+```
+
+Las coordenadas con las que estamos trabajando han sido reportadas con tres decimales. Aunque desconocemos la incertidumbre real del GPS utilizado, sabemos que una diferencia de 0.001° equivale aproximadamente a 111 m en latitud y a unos 88-89 m en longitud en Sevilla. Por tanto, la resolución de estas coordenadas es del orden de decenas de metros.
+
+Si transformamos las coordenadas a un sistema proyectado como UTM, obtendremos coordenadas expresadas en metros y con decimales de metro o incluso fracciones de metro. Sin embargo, estos nuevos decimales no aportan información adicional sobre la calidad de la medición original.
+
+```{r}
+#transformo a coordenadas planas (UTM zona 30N)
+muestreos_utm30N<-st_transform(muestreos_wgs84, 25830)
+print(st_coordinates(muestreos_utm30N))
+```
+
+## Las reproyecciones de rasters implican remuestreo
+
+Un ráster es una cuadrícula con una extensión, un tamaño de celda, una posición y un SRC definidos. Al reproyectarlo, la cuadrícula original puede deformarse respecto al nuevo SRC, por lo que es necesario construir una nueva cuadrícula y asignar un valor a cada una de sus celdas a partir de los datos originales. Este proceso se llama remuestreo y puede realizarse mediante distintos métodos. Según el método que utilicemos, los valores de las nuevas celdas pueden variar repecto a los originales.
+
+![](images/clipboard-675792765.png)
+
+Fuente: [ESRI](https://learn.arcgis.com/es/projects/explore-imagery-spatial-resolution/)
+
+En la siguiente imagen vemos los distintos métodos de remuestreo para calcular los valores de los píxeles de un ráster en la nueva cuadrícula tras la reproyección. El punto rojo representa el centro de la nueva celda, y los puntos azules, las celdas originales utilizadas para calcular su valor, según el método utilizado:
+
+1.  **Vecino más próximo:** copia el valor de la celda original cuyo centro está más cerca.
+2.  **Interpolación bilineal:** combina los valores vecinos mediante una media ponderada según la posición.
+3.  **Interpolación cúbica:** utiliza el valor de una ventana de pixeles (normalmente de los 8 o 16 píxeles más cercános) para calcular el nuevo valor.
+
+![](images/clipboard-2516519923.png)
+
+Fuente: [ESRI](https://learn.arcgis.com/es/projects/explore-imagery-spatial-resolution/)
+
+Vamos a entender mejor las implicaciones del remuestreo con el siguiente ejemplo:
+
+Creamos un ráster simulado de temperaturas en EPSG:4326.
+
+```{r}
+
+r_temperatura <- rast(
+  xmin = -3.45, xmax = -3.05,
+  ymin = 40.40, ymax = 40.58,
+  resolution = 0.002,
+  crs = "EPSG:4326"
+)
+
+xy <- crds(r_temperatura)
+
+# Asignar gradiente espacial simulado
+values(r_temperatura) <- 18 +
+  5 * (xy[, 1] - min(xy[, 1])) / diff(range(xy[, 1])) -
+  3 * (xy[, 2] - min(xy[, 2])) / diff(range(xy[, 2]))
+
+names(r_temperatura) <- "temperatura"
+```
+
+Por defecto, para variables continuas, terra utiliza interpolación bilineal.
+
+```{r}
+# Reproyectar con interpolación bilineal
+r_temperatura_utm <- r_temperatura |>
+  project("EPSG:25830") #, method = "bilinear")
+```
+
+```{r}
+# Comparar geometría, extensión y resolución.
+
+res(r_temperatura)
+res(r_temperatura_utm)
+
+ext(r_temperatura)
+ext(r_temperatura_utm)
+
+ncell(r_temperatura)
+ncell(r_temperatura_utm)
+
+minmax(r_temperatura)
+minmax(r_temperatura_utm)
+```
+
+Al reproyectar el ráster, los centros de los nuevos píxeles no coinciden con los originales. Como hemos remuestreado con el método de interpolación bilineal, que calcula las temperaturas combinando los valores de los píxeles vecinos en de la cuadrícula original. Por tanto, el ráster reproyectado tiene valores ligeramente distintos a los originales.
+
+```{r}
+# Visualizar ráster original y reproyectado
+plot(r_temperatura, main = "Temperatura original: EPSG:4326",
+     colNA = "red"
+)
+plot(r_temperatura_utm,
+     main = "Temperatura reproyectada: EPSG:25830",
+     colNA = "red")
+```
+
+Vemos que incluso se incorporan píxeles con valores NA. Esto se debe a que el nuevo raster, que se ha desplazado o girado, ha incorporado nuevos píxeles en los bordes, para los que no había valores de origen.
+
+# Recomendacion (4): Considerar cómo influye la resolución espacial y los píxeles mezclados en nuestros resultados
+
+En ecología, solemos combinar datos espaciales de distintas resoluciones, cada uno con sus incertidumbres asociadas, para explicar o predecir patrones ecológicos. El problema surge cuando utilizamos datos de resolución gruesa, o los relacionamos con datos de resolución fina, para extraer conclusiones sobre procesos que ocurren a escalas pequeñas. Un píxel de resolución gruesa puede incluir distintas coberturas del suelo, como bosque y zonas sin bosque, de modo que su valor representa esa mezcla (a eso le llamamos "píxel mixto"). Si no tenemos esto en cuenta, podemos atribuir a un proceso ecológico local un patrón que se debe, al menos en parte, a la mezcla de coberturas.
+
+Para ilustrarlo, tomaremos como referencia el estudio de Chaplin-Kramer et al. (2015), *«Degradation in carbon stocks near tropical forest edges»*. En este trabajo, los investigadores combinaron datos ráster de cobertura del suelo con una resolución de 30 m y datos de biomasa con una resolución de 500 m, y observaron una disminución de la biomasa cerca de los bordes del bosque.
+
+Vamos a ver con el siguiente código lo que estaba pasando. Primero, vamos a crear la cobertura del suelo a 30 m.
+
+```{r}
+cobertura_30 <- rast(
+  xmin = 500000, xmax = 503000,
+  ymin = 4480000, ymax = 4483000,
+  resolution = 30, crs = "EPSG:25830"
+)
+xy <- crds(cobertura_30)
+borde_x <- 501200
+values(cobertura_30) <- as.integer(xy[, 1] >= borde_x)
+names(cobertura_30) <- "bosque"
+cobertura_factor <- cobertura_30
+levels(cobertura_factor) <- data.frame(
+  ID = c(0, 1), cobertura = c("No bosque", "Bosque")
+)
+```
+
+Vamos a suponer la siguiente que la biomasa se mantiene constante y asignamos 200 Mg/ha a todas las celdas de bosque y 0 a las de no bosque. En esta situación, vemos que la biomasa no disminuye al acercarnos al borde.
+
+```{r}
+biomasa_30 <- cobertura_30 * 200
+names(biomasa_30) <- "biomasa"
+```
+
+Resampleamos los datos de biomasa de 30 m a 500 m de resolución, que es el tamaño de píxel con el que los investigadores realizaron sus analisis. Esto sería lo que a menudo nos referimos con un upscaling.
+
+```{r}
+plantilla_500 <- rast(
+  ext(cobertura_30), resolution = 500, crs = crs(cobertura_30)
+)
+biomasa_500 <- resample(biomasa_30, plantilla_500, method = "average")
+fraccion_bosque_500 <- resample(
+  cobertura_30, plantilla_500, method = "average"
+)
+names(biomasa_500) <- "biomasa"
+```
+
+Qué pasa si volvemos a 30 m? Repetimos el valor de la celda gruesa sobre la cuadrícula fina mediante vecino más próximo. Lo usamos para mostrar de dónde viene cada valor, no como método para estimar nueva variación local de biomasa.
+
+```{r}
+biomasa_500_a_30 <- resample(
+  biomasa_500, cobertura_30, method = "near"
+)
+```
+
+```{r}
+
+# Elementos comunes a los cuatro mapas
+elementos_comunes <- list(
+  geom_vline(
+    xintercept = borde_x,
+    linetype = "dashed",
+    linewidth = 0.5),
+  theme_void(),
+  theme(
+    plot.title = element_text(size = 12, face = "bold"),
+    legend.position = "bottom"
+  )
+)
+
+
+# Cobertura del suelo: categorías
+p_cobertura <- ggplot() +
+  geom_spatraster(data = cobertura_factor) +
+  scale_fill_manual(
+    values = c("No bosque" = "#FFF2CC", "Bosque" = "#16634A"),
+    name = "Cobertura"
+  ) +
+  
+  geom_vline(
+    xintercept = seq(
+      terra::xmin(cobertura_factor),
+      terra::xmax(cobertura_factor),
+      by = terra::res(cobertura_factor)[1]
+    ),
+    colour = "#77777780",
+    linewidth = 0.15
+  ) +
+  geom_hline(
+    yintercept = seq(
+      terra::ymin(cobertura_factor),
+      terra::ymax(cobertura_factor),
+      by = terra::res(cobertura_factor)[2]
+    ),
+    colour = "#77777780",
+    linewidth = 0.15
+  ) +
+  elementos_comunes +
+  labs(title = "Cobertura del suelo: 30 m")
+
+# Cobertura del suelo: categorías
+p_biomasa_30 <- ggplot() +
+  geom_spatraster(data = biomasa_30) +
+  scale_fill_gradient(
+    low = "#FFF2CC",
+    high = "#16634A",
+    limits = c(0, 200),
+    name = "Biomasa (Mg/ha)"
+  ) +
+  elementos_comunes +
+  labs(title = "Biomasa de referencia: 30 m")
+
+# Biomasa a 500 m, mostrando los límites de las celdas
+p_biomasa_500 <- ggplot() +
+  geom_spatraster(data = biomasa_500) +
+  geom_vline(
+    xintercept = seq(500000, 503000, 500),
+    colour = "#77777780",
+    linewidth = 0.3
+  ) +
+  geom_hline(
+    yintercept = seq(4480000, 4483000, 500),
+    colour = "#77777780",
+    linewidth = 0.3
+  ) +
+  scale_fill_gradient(
+    low = "#FFF2CC",
+    high = "#16634A",
+    limits = c(0, 200),
+    name = "Biomasa (Mg/ha)"
+  ) +
+  elementos_comunes +
+  labs(title = "Biomasa media: 500 m")
+
+# Combinar los cuatro mapas y compartir las leyendas
+(p_cobertura  + p_biomasa_30 +
+    p_biomasa_500 +
+    plot_layout(guides = "collect")
+) & theme(legend.position = "bottom")
+```
+
+¿Qué estaba pasando realmente? Los píxeles cubrías los bordes forestales incluir información tanto de bosque como superficies no forestales. Por tanto, el valor de la biomasa en ese pixel era menor simplemente porque contenía menos superficie de bosque.
+
+![](images/clipboard-3141799990.png)
+
+(Fuente: <https://commons.wikimedia.org/wiki/File:Mixed_pixel.svg>)
+
+# Otras consideraciones: ¿Cómo exportar datos espaciales?
+
+## ¿En qué formato guardo mis datos espaciales?
+
+El formato de almacenamiento determina qué información puede guardar un archivo y con qué programas podemos utilizarlo. Distinguimos entre formatos **vectoriales** y **ráster**.
+
+# Lista de comprobaciones finales
+
+```{r}
+#| echo: false
+# Lista de comprobaciones ----------------------------------------------------
+
+cat("\nLISTA DE COMPROBACIONES ANTES DE UN ANÁLISIS ESPACIAL\n",
+    "\n1. ¿Todos los objetos tienen un SRC definido?",
+    "\n2. ¿El EPSG asignado describe realmente las coordenadas?",
+    "\n3. ¿El SRC es adecuado para la localización del estudio?",
+    "\n4. ¿Las unidades son apropiadas para medir distancias o áreas?",
+    "\n5. ¿Todos los objetos utilizan SRC compatibles?",
+    "\n6. ¿Se ha utilizado st_transform() o project() para transformar?",
+    "\n7. ¿El método de remuestreo es adecuado para la variable?",
+    "\n8. ¿Se ha evitado reproyectar repetidamente los datos?",
+    "\n9. ¿Se ha registrado el SRC original y el SRC del análisis?",
+    "\n10. ¿El código EPSG se incluye en métodos y metadatos?\n")
+```
